@@ -226,6 +226,10 @@ Best to use the GUI as to not mess anything up; can override default values.
 
 [pavoter-bulk.js](./SCRIPTS/pavoter-bulk.js)
 
+For raw zip data see:
+
+[Zip extractor](https://github.com/airborne-commando/zip-extractor/tree/main)
+
 **Zip file**
 [zip-data.js](./SCRIPTS/zip-data.js)
 
