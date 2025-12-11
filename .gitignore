@@ -1,2 +1,3 @@
 ./SCRIPTS/pavoter-bulk-dev.js
 ./SCRIPTS/zipMapping.js
+./SCRIPTS/replace_functions
