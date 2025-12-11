@@ -79,7 +79,7 @@
     // ZIP Cache Manager Class
     class ZipCacheManager {
         static CACHE_KEY = 'ubc_zip_cache';
-        static MAX_CACHE_SIZE = 1000; // Maximum number of ZIP codes to cache
+        static MAX_CACHE_SIZE = 40951; // Maximum number of ZIP codes to cache
         static CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
 
         static bulkSet(zipDataMap, ttl = this.CACHE_TTL) {
