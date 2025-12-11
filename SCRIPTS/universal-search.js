@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Universal Background Check Exporter
 // @namespace    http://tampermonkey.net/
-// @updateURL    https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/main/SCRIPTS/universal-search.js
-// @downloadURL  https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/main/SCRIPTS/universal-search.js
+// @updateURL    https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/universal-search.js
+// @downloadURL  https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/universal-search.js
 // @version      2.2.8
 // @description  Export results from multiple background check sites: FastBackgroundCheck, FastPeopleSearch, ZabaSearch, and Vote.org with API integration
 // @author       airborne-commando
@@ -75,6 +75,237 @@
             }
         }
     `);
+
+    // ZIP Cache Manager Class
+    class ZipCacheManager {
+        static CACHE_KEY = 'ubc_zip_cache';
+        static MAX_CACHE_SIZE = 1000; // Maximum number of ZIP codes to cache
+        static CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+
+        static getCache() {
+            try {
+                const cacheData = GM_getValue(this.CACHE_KEY, {
+                    entries: {},
+                    stats: {
+                        hits: 0,
+                        misses: 0,
+                        size: 0,
+                        lastCleared: null,
+                        createdAt: Date.now()
+                    }
+                });
+                return cacheData;
+            } catch (error) {
+                console.log('Error getting ZIP cache:', error);
+                return {
+                    entries: {},
+                    stats: {
+                        hits: 0,
+                        misses: 0,
+                        size: 0,
+                        lastCleared: null,
+                        createdAt: Date.now()
+                    }
+                };
+            }
+        }
+
+        static setCache(cacheData) {
+            try {
+                GM_setValue(this.CACHE_KEY, cacheData);
+            } catch (error) {
+                console.log('Error setting ZIP cache:', error);
+            }
+        }
+
+        static get(zipCode) {
+            const cache = this.getCache();
+
+            // Clean expired entries
+            this.cleanExpiredEntries(cache);
+
+            const entry = cache.entries[zipCode];
+
+            if (entry) {
+                // Check if entry is expired
+                if (entry.expiresAt && entry.expiresAt < Date.now()) {
+                    delete cache.entries[zipCode];
+                    cache.stats.size = Object.keys(cache.entries).length;
+                    this.setCache(cache);
+                    cache.stats.misses++;
+                    return null;
+                }
+
+                cache.stats.hits++;
+                this.setCache(cache);
+                return entry.data;
+            }
+
+            cache.stats.misses++;
+            this.setCache(cache);
+            return null;
+        }
+
+        static set(zipCode, data, ttl = this.CACHE_TTL) {
+            const cache = this.getCache();
+
+            // Clean expired entries before adding new one
+            this.cleanExpiredEntries(cache);
+
+            // Remove oldest entries if cache is full
+            if (Object.keys(cache.entries).length >= this.MAX_CACHE_SIZE) {
+                this.removeOldestEntries(cache, 10); // Remove 10 oldest entries
+            }
+
+            cache.entries[zipCode] = {
+                data: data,
+                createdAt: Date.now(),
+                expiresAt: Date.now() + ttl,
+                lastAccessed: Date.now()
+            };
+
+            cache.stats.size = Object.keys(cache.entries).length;
+            this.setCache(cache);
+
+            return true;
+        }
+
+        static updateAccessTime(zipCode) {
+            const cache = this.getCache();
+            const entry = cache.entries[zipCode];
+
+            if (entry) {
+                entry.lastAccessed = Date.now();
+                this.setCache(cache);
+            }
+        }
+
+        static remove(zipCode) {
+            const cache = this.getCache();
+
+            if (cache.entries[zipCode]) {
+                delete cache.entries[zipCode];
+                cache.stats.size = Object.keys(cache.entries).length;
+                this.setCache(cache);
+                return true;
+            }
+
+            return false;
+        }
+
+        static cleanExpiredEntries(cache) {
+            const now = Date.now();
+            let expiredCount = 0;
+
+            for (const zipCode in cache.entries) {
+                const entry = cache.entries[zipCode];
+                if (entry.expiresAt && entry.expiresAt < now) {
+                    delete cache.entries[zipCode];
+                    expiredCount++;
+                }
+            }
+
+            if (expiredCount > 0) {
+                cache.stats.size = Object.keys(cache.entries).length;
+                this.setCache(cache);
+            }
+
+            return expiredCount;
+        }
+
+        static removeOldestEntries(cache, count = 10) {
+            const entries = Object.entries(cache.entries);
+
+            // Sort by lastAccessed (oldest first)
+            entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
+
+            // Remove the oldest entries
+            const toRemove = entries.slice(0, Math.min(count, entries.length));
+
+            toRemove.forEach(([zipCode]) => {
+                delete cache.entries[zipCode];
+            });
+
+            cache.stats.size = Object.keys(cache.entries).length;
+            this.setCache(cache);
+
+            return toRemove.length;
+        }
+
+        static clear() {
+            const oldCache = this.getCache();
+            const newCache = {
+                entries: {},
+                stats: {
+                    hits: 0,
+                    misses: 0,
+                    size: 0,
+                    lastCleared: Date.now(),
+                    createdAt: oldCache.stats.createdAt || Date.now()
+                }
+            };
+
+            this.setCache(newCache);
+            return {
+                clearedEntries: Object.keys(oldCache.entries).length,
+                oldStats: oldCache.stats
+            };
+        }
+
+        static getStats() {
+            const cache = this.getCache();
+            const now = Date.now();
+
+            // Calculate some additional statistics
+            const entries = Object.values(cache.entries);
+            const totalAge = entries.reduce((sum, entry) => sum + (now - entry.createdAt), 0);
+            const avgAge = entries.length > 0 ? totalAge / entries.length : 0;
+
+            const hitRate = cache.stats.hits + cache.stats.misses > 0
+                ? (cache.stats.hits / (cache.stats.hits + cache.stats.misses) * 100).toFixed(2)
+                : 0;
+
+            return {
+                size: cache.stats.size,
+                hits: cache.stats.hits,
+                misses: cache.stats.misses,
+                hitRate: `${hitRate}%`,
+                maxSize: this.MAX_CACHE_SIZE,
+                ttlDays: Math.floor(this.CACHE_TTL / (24 * 60 * 60 * 1000)),
+                averageAgeHours: Math.floor(avgAge / (60 * 60 * 1000)),
+                lastCleared: cache.stats.lastCleared ? new Date(cache.stats.lastCleared).toLocaleString() : 'Never',
+                createdAt: new Date(cache.stats.createdAt).toLocaleString()
+            };
+        }
+
+        static exportCache() {
+            const cache = this.getCache();
+            return {
+                exportedAt: new Date().toISOString(),
+                cache: cache,
+                stats: this.getStats()
+            };
+        }
+
+        static importCache(importData) {
+            if (!importData || !importData.cache) {
+                throw new Error('Invalid import data');
+            }
+
+            // Validate the import data structure
+            if (!importData.cache.entries || !importData.cache.stats) {
+                throw new Error('Invalid cache structure in import data');
+            }
+
+            // Set the imported cache
+            this.setCache(importData.cache);
+
+            return {
+                importedEntries: Object.keys(importData.cache.entries).length,
+                importedStats: importData.cache.stats
+            };
+        }
+    }
 
     // Search Utility Class
     class SearchUtility {
@@ -1731,7 +1962,10 @@ class VoteOrgExtractor extends BaseExtractor {
             this.isMobile = this.detectMobile();
             this.currentPageData = null;
             this.siteExtractor = null;
-            this.zipMapping = null; // Add this line
+            this.zipMapping = null;
+            this.zipCache = ZipCacheManager;
+            this.preCacheInProgress = false;  // Add this
+            this.preCacheCancelled = false;   // Add this
             this.init();
         }
 
@@ -1759,6 +1993,15 @@ class VoteOrgExtractor extends BaseExtractor {
     // Add ZIP mapping loading methods
     async loadZipMapping() {
         try {
+            // Check cache first
+            const cachedMapping = this.zipCache.get('zip_mapping_full');
+            if (cachedMapping) {
+                this.zipMapping = cachedMapping;
+                console.log(`Loaded ZIP mapping from cache with ${Object.keys(this.zipMapping).length} entries`);
+                this.updateZipMappingStatus();
+                return;
+            }
+
             // Load ZIP mapping from external source
             const response = await fetch('https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/zipMapping.js');
             const jsContent = await response.text();
@@ -1771,6 +2014,10 @@ class VoteOrgExtractor extends BaseExtractor {
 
             if (this.zipMapping && Object.keys(this.zipMapping).length > 0) {
                 console.log(`Loaded ZIP mapping with ${Object.keys(this.zipMapping).length} entries`);
+
+                // Cache the mapping
+                this.zipCache.set('zip_mapping_full', this.zipMapping, 7 * 24 * 60 * 60 * 1000); // Cache for 7 days
+
                 this.updateZipMappingStatus();
                 return;
             }
@@ -1864,6 +2111,13 @@ class VoteOrgExtractor extends BaseExtractor {
 
     // Add autoFillFromZip method
     async autoFillFromZip(zipCode) {
+        // Check cache first
+        const cachedData = this.zipCache.get(zipCode);
+        if (cachedData) {
+            this.fillCityStateFromCache(zipCode, cachedData);
+            return true;
+        }
+
         if (!this.zipMapping) {
             await this.loadZipMapping();
         }
@@ -1871,20 +2125,11 @@ class VoteOrgExtractor extends BaseExtractor {
         const mapping = this.zipMapping[zipCode];
 
         if (mapping) {
-            // Fill city field - ALWAYS overwrite
-            const cityInput = document.getElementById('ubcVoteCity');
-            if (cityInput && mapping.city) {
-                cityInput.value = mapping.city;
-                console.log(`Auto-filled city: ${mapping.city}`);
-            }
+            // Cache the result
+            this.zipCache.set(zipCode, mapping);
 
-            // Fill state field - ALWAYS overwrite
-            const stateInput = document.getElementById('ubcVoteState');
-            if (stateInput && mapping.state) {
-                stateInput.value = mapping.state;
-                console.log(`Auto-filled state: ${mapping.state}`);
-            }
-
+            // Fill city and state fields
+            this.fillCityStateFromCache(zipCode, mapping);
             return true;
         } else {
             console.log(`No mapping found for ZIP: ${zipCode}`);
@@ -1900,13 +2145,377 @@ class VoteOrgExtractor extends BaseExtractor {
         }
     }
 
+    // Helper method to fill city and state from cached data
+    fillCityStateFromCache(zipCode, mapping) {
+        // Fill city field - ALWAYS overwrite
+        const cityInput = document.getElementById('ubcVoteCity');
+        if (cityInput && mapping.city) {
+            cityInput.value = mapping.city;
+            console.log(`Auto-filled city from cache: ${mapping.city}`);
+        }
+
+        // Fill state field - ALWAYS overwrite
+        const stateInput = document.getElementById('ubcVoteState');
+        if (stateInput && mapping.state) {
+            stateInput.value = mapping.state;
+            console.log(`Auto-filled state from cache: ${mapping.state}`);
+        }
+
+        // Update the cache access time
+        this.zipCache.updateAccessTime(zipCode);
+    }
+
     // Add updateZipMappingStatus method
     updateZipMappingStatus() {
         const statusElement = document.getElementById('ubcZipMappingStatus');
-        if (statusElement && this.zipMapping) {
-            const count = Object.keys(this.zipMapping).length;
-            statusElement.textContent = `ZIP mapping: ${count} codes loaded (auto-fills city/state)`;
-            statusElement.style.color = '#27ae60';
+        if (statusElement) {
+            const cacheStats = this.zipCache.getStats();
+
+            if (this.zipMapping) {
+                const count = Object.keys(this.zipMapping).length;
+                statusElement.textContent = `ZIP mapping: ${count} codes loaded, cache: ${cacheStats.size} entries (${cacheStats.hitRate} hit rate)`;
+                statusElement.style.color = '#27ae60';
+            } else {
+                statusElement.textContent = `ZIP mapping: Loading... Cache: ${cacheStats.size} entries (${cacheStats.hitRate} hit rate)`;
+                statusElement.style.color = '#f39c12';
+            }
+        }
+    }
+
+    // Add method to manage ZIP cache
+    manageZipCache() {
+        const cacheStats = this.zipCache.getStats();
+
+        let html = `<div style="font-weight: bold; margin-bottom: 5px;">ZIP Code Cache Management:</div>`;
+        html += `<div style="margin-bottom: 10px;">`;
+        html += `<strong>Cache Statistics:</strong><br>`;
+        html += `<small>• Entries: ${cacheStats.size}/${cacheStats.maxSize}</small><br>`;
+        html += `<small>• Hit Rate: ${cacheStats.hitRate}</small><br>`;
+        html += `<small>• Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}</small><br>`;
+        html += `<small>• Average Age: ${cacheStats.averageAgeHours} hours</small><br>`;
+        html += `<small>• Created: ${cacheStats.createdAt}</small><br>`;
+        html += `<small>• Last Cleared: ${cacheStats.lastCleared}</small>`;
+        html += `</div>`;
+
+        html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">`;
+        html += `<button id="ubcClearZipCache" style="background: #e74c3c; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px;">Clear ZIP Cache</button>`;
+        html += `<button id="ubcExportZipCache" style="background: #3498db; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px;">Export Cache</button>`;
+        html += `<button id="ubcRefreshZipCache" style="background: #27ae60; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px;">Refresh Cache</button>`;
+        html += `<button id="ubcViewZipCache" style="background: #f39c12; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px;">View Cache</button>`;
+        html += `<button id="ubcPreCacheZips" style="background: #9b59b6; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px;">Pre-cache ZIPs</button>`;
+        html += `<button id="ubcCancelPreCache" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 11px; display: none;">Cancel</button>`;
+        html += `</div>`;
+
+        html += `<div id="ubcZipCacheResults" style="margin-top: 10px; font-size: 11px; display: none;"></div>`;
+
+        // Create or update cache management section
+        let cacheSection = document.getElementById('ubcZipCacheSection');
+        if (!cacheSection) {
+            cacheSection = document.createElement('div');
+            cacheSection.id = 'ubcZipCacheSection';
+            cacheSection.style.cssText = 'margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;';
+
+            // Insert after the vote.org section
+            const voteSection = document.querySelector('div[style*="background: rgb(240, 230, 255)"]');
+            if (voteSection) {
+                voteSection.parentNode.insertBefore(cacheSection, voteSection.nextSibling);
+            }
+        }
+
+        cacheSection.innerHTML = html;
+
+        // Add event listeners
+        document.getElementById('ubcClearZipCache').onclick = () => this.clearZipCache();
+        document.getElementById('ubcExportZipCache').onclick = () => this.exportZipCache();
+        document.getElementById('ubcRefreshZipCache').onclick = () => this.refreshZipCache();
+        document.getElementById('ubcViewZipCache').onclick = () => this.viewZipCache();
+        document.getElementById('ubcPreCacheZips').onclick = () => this.preCacheAllZips();
+        // Note: ubcCancelPreCache event listener will be added when pre-caching starts
+    }
+
+    preCacheAllZips() {
+    // Don't start if already running
+    if (this.preCacheInProgress) {
+        return;
+    }
+    
+    this.preCacheInProgress = true;
+    this.preCacheCancelled = false;
+    
+    // Show cancel button, hide pre-cache button
+    const preCacheBtn = document.getElementById('ubcPreCacheZips');
+    const cancelBtn = document.getElementById('ubcCancelPreCache');
+    if (preCacheBtn && cancelBtn) {
+        preCacheBtn.style.display = 'none';
+        cancelBtn.style.display = 'block';
+        cancelBtn.onclick = () => {
+            this.preCacheCancelled = true;
+            this.preCacheInProgress = false;
+            preCacheBtn.style.display = 'block';
+            cancelBtn.style.display = 'none';
+            
+            const resultsDiv = document.getElementById('ubcZipCacheResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #e74c3c;">Pre-caching cancelled</div>`;
+            }
+        };
+    }
+    
+    // Start the actual pre-caching process
+    this.executePreCache().finally(() => {
+        this.preCacheInProgress = false;
+        // Restore button states
+        if (preCacheBtn && cancelBtn) {
+            preCacheBtn.style.display = 'block';
+            cancelBtn.style.display = 'none';
+        }
+    });
+}
+
+async executePreCache() {
+    try {
+        const cacheStats = this.zipCache.getStats();
+        const existingCount = cacheStats.size;
+        
+        // Don't pre-cache if we already have a substantial cache
+        if (existingCount > 500) {
+            console.log(`ZIP cache already has ${existingCount} entries, skipping pre-cache`);
+            const resultsDiv = document.getElementById('ubcZipCacheResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #f39c12;">
+                    ZIP cache already has ${existingCount} entries, skipping pre-cache
+                </div>`;
+                resultsDiv.style.display = 'block';
+            }
+            return;
+        }
+        
+        console.log(`Starting ZIP code pre-caching. Current cache: ${existingCount} entries`);
+        
+        if (!this.zipMapping) {
+            await this.loadZipMapping();
+        }
+        
+        if (!this.zipMapping || Object.keys(this.zipMapping).length === 0) {
+            console.log('No ZIP mapping available for pre-caching');
+            const resultsDiv = document.getElementById('ubcZipCacheResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #e74c3c;">No ZIP mapping available for pre-caching</div>`;
+                resultsDiv.style.display = 'block';
+            }
+            return;
+        }
+        
+        const totalZips = Object.keys(this.zipMapping).length;
+        
+        // Filter out ZIPs already in cache
+        const zipsToCache = {};
+        Object.entries(this.zipMapping).forEach(([zipCode, data]) => {
+            if (!this.zipCache.get(zipCode) && !this.preCacheCancelled) {
+                zipsToCache[zipCode] = data;
+            }
+        });
+        
+        const zipsToCacheCount = Object.keys(zipsToCache).length;
+        
+        if (zipsToCacheCount === 0) {
+            console.log('All ZIP codes already in cache');
+            const resultsDiv = document.getElementById('ubcZipCacheResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #27ae60;">All ZIP codes already in cache</div>`;
+                resultsDiv.style.display = 'block';
+            }
+            return;
+        }
+        
+        console.log(`Will cache ${zipsToCacheCount} new ZIP codes (${totalZips - zipsToCacheCount} already cached)`);
+        
+        // Show progress in UI
+        const resultsDiv = document.getElementById('ubcZipCacheResults');
+        if (resultsDiv) {
+            resultsDiv.innerHTML = `<div style="color: #f39c12;">
+                Pre-caching ${zipsToCacheCount} ZIP codes...<br>
+                Processing: 0/${zipsToCacheCount} (0%)
+                <div style="width: 100%; height: 5px; background: #ddd; margin-top: 5px; border-radius: 2px;">
+                    <div id="ubcPreCacheProgress" style="width: 0%; height: 100%; background: #3498db; border-radius: 2px;"></div>
+                </div>
+            </div>`;
+            resultsDiv.style.display = 'block';
+        }
+        
+        // Process in smaller batches to prevent freezing
+        const batchSize = 20; // Reduced from 50 to 20 for better responsiveness
+        const entries = Object.entries(zipsToCache);
+        let processed = 0;
+        
+        for (let i = 0; i < entries.length; i += batchSize) {
+            // Check if cancelled
+            if (this.preCacheCancelled) {
+                console.log('Pre-caching cancelled by user');
+                return;
+            }
+            
+            const batch = entries.slice(i, i + batchSize);
+            const batchObject = {};
+            
+            // Create batch object
+            batch.forEach(([zipCode, data]) => {
+                batchObject[zipCode] = data;
+            });
+            
+            // Cache this batch
+            this.zipCache.bulkSet(batchObject);
+            processed += batch.length;
+            
+            // Update progress
+            const percent = Math.round((processed / zipsToCacheCount) * 100);
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #f39c12;">
+                    Pre-caching ${zipsToCacheCount} ZIP codes...<br>
+                    Processed: ${processed}/${zipsToCacheCount} (${percent}%)
+                    <div style="width: 100%; height: 5px; background: #ddd; margin-top: 5px; border-radius: 2px;">
+                        <div id="ubcPreCacheProgress" style="width: ${percent}%; height: 100%; background: #3498db; border-radius: 2px;"></div>
+                    </div>
+                </div>`;
+                
+                // Allow UI to update by yielding control
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            
+            // Small delay between batches to prevent UI freezing
+            await new Promise(resolve => setTimeout(resolve, 50)); // Increased from 10 to 50ms
+        }
+        
+        if (this.preCacheCancelled) {
+            return;
+        }
+        
+        const newStats = this.zipCache.getStats();
+        console.log(`Pre-caching complete. Cache now has ${newStats.size} entries`);
+        
+        // Update status in UI
+        this.updateZipMappingStatus();
+        
+        // Show success message
+        if (resultsDiv) {
+            resultsDiv.innerHTML = `<div style="color: #27ae60;">
+                Pre-cached ${zipsToCacheCount} ZIP codes successfully!<br>
+                Total cached: ${newStats.size}/${totalZips}
+            </div>`;
+        }
+        
+    } catch (error) {
+        console.log(`Error pre-caching ZIP codes: ${error}`);
+        
+        // Show error in UI
+        const resultsDiv = document.getElementById('ubcZipCacheResults');
+        if (resultsDiv) {
+            resultsDiv.innerHTML = `<div style="color: #e74c3c;">
+                Error pre-caching ZIP codes: ${error.message}
+            </div>`;
+            resultsDiv.style.display = 'block';
+        }
+    }
+}
+
+    // Clear ZIP cache method
+    clearZipCache() {
+        if (!confirm('Are you sure you want to clear the ZIP code cache? This will not delete the main ZIP mapping, only the cached entries.')) {
+            return;
+        }
+
+        const result = this.zipCache.clear();
+
+        // Update UI
+        const resultsDiv = document.getElementById('ubcZipCacheResults');
+        if (resultsDiv) {
+            resultsDiv.innerHTML = `<div style="color: #27ae60;">Cleared ${result.clearedEntries} cached ZIP code entries</div>`;
+            resultsDiv.style.display = 'block';
+        }
+
+        // Update status
+        this.updateZipMappingStatus();
+        this.log(`Cleared ZIP cache: ${result.clearedEntries} entries removed`);
+    }
+
+    // Export ZIP cache method
+    exportZipCache() {
+        try {
+            const cacheData = this.zipCache.exportCache();
+            const blob = new Blob([JSON.stringify(cacheData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `zip_cache_export_${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            this.log(`Exported ZIP cache with ${Object.keys(cacheData.cache.entries).length} entries`);
+        } catch (error) {
+            this.log(`Error exporting ZIP cache: ${error}`);
+        }
+    }
+
+    // Refresh ZIP cache method
+    refreshZipCache() {
+        // Clear the full mapping cache and reload
+        this.zipCache.remove('zip_mapping_full');
+        this.zipMapping = null;
+
+        // Reload the mapping
+        this.loadZipMapping().then(() => {
+            const resultsDiv = document.getElementById('ubcZipCacheResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #27ae60;">ZIP mapping cache refreshed successfully</div>`;
+                resultsDiv.style.display = 'block';
+            }
+
+            this.log('ZIP mapping cache refreshed');
+        }).catch(error => {
+            this.log(`Error refreshing ZIP cache: ${error}`);
+        });
+    }
+
+    // View ZIP cache method
+    viewZipCache() {
+        const cacheStats = this.zipCache.getStats();
+        const cache = this.zipCache.getCache();
+
+        let html = `<div style="font-weight: bold; margin-bottom: 5px;">ZIP Code Cache Contents:</div>`;
+
+        if (cacheStats.size === 0) {
+            html += `<div style="color: #666;">Cache is empty</div>`;
+        } else {
+            html += `<div style="max-height: 200px; overflow-y: auto; font-size: 10px;">`;
+
+            // Show first 20 entries
+            const entries = Object.entries(cache.entries);
+            const displayEntries = entries.slice(0, 20);
+
+            displayEntries.forEach(([zipCode, entry]) => {
+                const age = Math.floor((Date.now() - entry.createdAt) / (60 * 60 * 1000));
+                const lastAccess = Math.floor((Date.now() - entry.lastAccessed) / (60 * 60 * 1000));
+
+                html += `<div style="margin-bottom: 3px; padding: 3px; background: #f0f0f0; border-radius: 2px;">`;
+                html += `<strong>${zipCode}:</strong> ${entry.data.city}, ${entry.data.state}`;
+                html += `<br><small>Age: ${age}h, Last Access: ${lastAccess}h ago</small>`;
+                html += `</div>`;
+            });
+
+            if (entries.length > 20) {
+                html += `<div style="color: #666; font-style: italic;">... and ${entries.length - 20} more entries</div>`;
+            }
+
+            html += `</div>`;
+        }
+
+        const resultsDiv = document.getElementById('ubcZipCacheResults');
+        if (resultsDiv) {
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
         }
     }
 
@@ -1958,14 +2567,19 @@ class VoteOrgExtractor extends BaseExtractor {
         }, 1000);
     }
 
-        async init() {
-            await this.waitForPageLoad();
-            this.initializeSiteExtractor();
-            this.extractCurrentPageData();
-            this.createUI();
-            this.setupZipAutoFillListener();
-            await this.loadZipMapping(); // Pre-load ZIP mapping
-        }
+    async init() {
+        await this.waitForPageLoad();
+        this.initializeSiteExtractor();
+        this.extractCurrentPageData();
+        this.createUI();
+        this.setupZipAutoFillListener();
+        await this.loadZipMapping(); // Pre-load ZIP mapping
+        
+        // Don't automatically pre-cache anymore - let users do it manually
+        // this.manageZipCache(); // This will be called from createUI
+        
+        this.log(`Universal exporter initialized for ${this.getSiteName()}`);
+    }
 
         async waitForPageLoad() {
             return new Promise((resolve) => {
@@ -2318,6 +2932,8 @@ createUI() {
     container.appendChild(footer);
 
     document.body.appendChild(container);
+
+    this.manageZipCache();
 
     // Event listeners - ADD THEM AFTER ALL ELEMENTS ARE CREATED
     document.getElementById('ubcCalculateAge').onclick = () => this.calculateAge();
