@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         The entire zip code database of the USA (or at least I assume)
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.0
 // @description  ZIP code to county mapping for the USA (military or special-use may be missing)
 // @author       airborne-commando
 // @grant        none
@@ -41262,23 +41262,9 @@
                 '826': 'WY', '827': 'WY', '828': 'WY', '829': 'WY', '830': 'WY', '831': 'WY'
             };
 
-    // Export the mapping for other scripts to use
-    if (typeof window !== 'undefined') {
-        window.zipMapping = zipMapping;
-        window.prefixToState = prefixToState;
-        
-        // Also expose a helper function for getting state from ZIP prefix
-        window.getStateFromZipPrefix = function(zipCode) {
-            if (!zipCode || zipCode.length < 3) return null;
-            const prefix = zipCode.substring(0, 3);
-            return prefixToState[prefix] || null;
-        };
-        
-        // Expose a function to get location data
-        window.getLocationFromZip = function(zipCode) {
-            return zipMapping[zipCode] || null;
-        };
-    }
-
-    console.log(`Zip mapping loaded with ${Object.keys(zipMapping).length} entries`);
+    // Make data available globally
+    window.zipMappingData = zipMapping;
+    window.zipPrefixData = prefixToState;
+    
+    console.log(`Loaded ${Object.keys(zipMapping).length} ZIP codes`);
 })();
