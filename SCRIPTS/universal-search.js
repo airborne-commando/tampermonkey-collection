@@ -82,6 +82,36 @@
         static MAX_CACHE_SIZE = 1000; // Maximum number of ZIP codes to cache
         static CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
 
+        static bulkSet(zipDataMap, ttl = this.CACHE_TTL) {
+            const cache = this.getCache();
+
+            // Clean expired entries before adding new ones
+            this.cleanExpiredEntries(cache);
+
+            // Check if we need to make room
+            const newEntriesCount = Object.keys(zipDataMap).length;
+            if (Object.keys(cache.entries).length + newEntriesCount > this.MAX_CACHE_SIZE) {
+                // Remove enough old entries to make room
+                const toRemove = Math.max(10, newEntriesCount - (this.MAX_CACHE_SIZE - Object.keys(cache.entries).length));
+                this.removeOldestEntries(cache, toRemove);
+            }
+
+            const now = Date.now();
+            for (const [zipCode, data] of Object.entries(zipDataMap)) {
+                cache.entries[zipCode] = {
+                    data: data,
+                    createdAt: now,
+                    expiresAt: now + ttl,
+                    lastAccessed: now
+                };
+            }
+
+            cache.stats.size = Object.keys(cache.entries).length;
+            this.setCache(cache);
+
+            return newEntriesCount;
+        }
+
         static getCache() {
             try {
                 const cacheData = GM_getValue(this.CACHE_KEY, {
@@ -2238,10 +2268,10 @@ class VoteOrgExtractor extends BaseExtractor {
     if (this.preCacheInProgress) {
         return;
     }
-    
+
     this.preCacheInProgress = true;
     this.preCacheCancelled = false;
-    
+
     // Show cancel button, hide pre-cache button
     const preCacheBtn = document.getElementById('ubcPreCacheZips');
     const cancelBtn = document.getElementById('ubcCancelPreCache');
@@ -2253,14 +2283,14 @@ class VoteOrgExtractor extends BaseExtractor {
             this.preCacheInProgress = false;
             preCacheBtn.style.display = 'block';
             cancelBtn.style.display = 'none';
-            
+
             const resultsDiv = document.getElementById('ubcZipCacheResults');
             if (resultsDiv) {
                 resultsDiv.innerHTML = `<div style="color: #e74c3c;">Pre-caching cancelled</div>`;
             }
         };
     }
-    
+
     // Start the actual pre-caching process
     this.executePreCache().finally(() => {
         this.preCacheInProgress = false;
@@ -2276,26 +2306,13 @@ async executePreCache() {
     try {
         const cacheStats = this.zipCache.getStats();
         const existingCount = cacheStats.size;
-        
-        // Don't pre-cache if we already have a substantial cache
-        if (existingCount > 500) {
-            console.log(`ZIP cache already has ${existingCount} entries, skipping pre-cache`);
-            const resultsDiv = document.getElementById('ubcZipCacheResults');
-            if (resultsDiv) {
-                resultsDiv.innerHTML = `<div style="color: #f39c12;">
-                    ZIP cache already has ${existingCount} entries, skipping pre-cache
-                </div>`;
-                resultsDiv.style.display = 'block';
-            }
-            return;
-        }
-        
+
         console.log(`Starting ZIP code pre-caching. Current cache: ${existingCount} entries`);
-        
+
         if (!this.zipMapping) {
             await this.loadZipMapping();
         }
-        
+
         if (!this.zipMapping || Object.keys(this.zipMapping).length === 0) {
             console.log('No ZIP mapping available for pre-caching');
             const resultsDiv = document.getElementById('ubcZipCacheResults');
@@ -2305,31 +2322,16 @@ async executePreCache() {
             }
             return;
         }
-        
+
         const totalZips = Object.keys(this.zipMapping).length;
-        
-        // Filter out ZIPs already in cache
-        const zipsToCache = {};
-        Object.entries(this.zipMapping).forEach(([zipCode, data]) => {
-            if (!this.zipCache.get(zipCode) && !this.preCacheCancelled) {
-                zipsToCache[zipCode] = data;
-            }
-        });
-        
-        const zipsToCacheCount = Object.keys(zipsToCache).length;
-        
-        if (zipsToCacheCount === 0) {
-            console.log('All ZIP codes already in cache');
-            const resultsDiv = document.getElementById('ubcZipCacheResults');
-            if (resultsDiv) {
-                resultsDiv.innerHTML = `<div style="color: #27ae60;">All ZIP codes already in cache</div>`;
-                resultsDiv.style.display = 'block';
-            }
-            return;
-        }
-        
-        console.log(`Will cache ${zipsToCacheCount} new ZIP codes (${totalZips - zipsToCacheCount} already cached)`);
-        
+
+        // MODIFIED: Pre-cache ALL ZIPs from the mapping, regardless of whether they're already cached
+        // This ensures we're caching all ZIPs when the button is clicked
+        const zipsToCache = this.zipMapping;
+        const zipsToCacheCount = totalZips;
+
+        console.log(`Will cache ${zipsToCacheCount} ZIP codes (all from mapping)`);
+
         // Show progress in UI
         const resultsDiv = document.getElementById('ubcZipCacheResults');
         if (resultsDiv) {
@@ -2342,71 +2344,71 @@ async executePreCache() {
             </div>`;
             resultsDiv.style.display = 'block';
         }
-        
+
         // Process in smaller batches to prevent freezing
-        const batchSize = 20; // Reduced from 50 to 20 for better responsiveness
+        const batchSize = 20;
         const entries = Object.entries(zipsToCache);
         let processed = 0;
-        
+
         for (let i = 0; i < entries.length; i += batchSize) {
             // Check if cancelled
             if (this.preCacheCancelled) {
                 console.log('Pre-caching cancelled by user');
                 return;
             }
-            
+
             const batch = entries.slice(i, i + batchSize);
             const batchObject = {};
-            
+
             // Create batch object
             batch.forEach(([zipCode, data]) => {
                 batchObject[zipCode] = data;
             });
-            
-            // Cache this batch
+
+            // Cache this batch - ALWAYS set, even if already cached (overwrites if exists)
             this.zipCache.bulkSet(batchObject);
             processed += batch.length;
-            
+
             // Update progress
             const percent = Math.round((processed / zipsToCacheCount) * 100);
             if (resultsDiv) {
-                resultsDiv.innerHTML = `<div style="color: #f39c12;">
-                    Pre-caching ${zipsToCacheCount} ZIP codes...<br>
+                resultsDiv.innerHTML = `<div style="color: #f39c3c;">
+                    Pre-caching ALL ${zipsToCacheCount} ZIP codes...<br>
                     Processed: ${processed}/${zipsToCacheCount} (${percent}%)
                     <div style="width: 100%; height: 5px; background: #ddd; margin-top: 5px; border-radius: 2px;">
                         <div id="ubcPreCacheProgress" style="width: ${percent}%; height: 100%; background: #3498db; border-radius: 2px;"></div>
                     </div>
                 </div>`;
-                
+
                 // Allow UI to update by yielding control
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
-            
+
             // Small delay between batches to prevent UI freezing
-            await new Promise(resolve => setTimeout(resolve, 50)); // Increased from 10 to 50ms
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
-        
+
         if (this.preCacheCancelled) {
             return;
         }
-        
+
         const newStats = this.zipCache.getStats();
         console.log(`Pre-caching complete. Cache now has ${newStats.size} entries`);
-        
+
         // Update status in UI
         this.updateZipMappingStatus();
-        
+
         // Show success message
         if (resultsDiv) {
             resultsDiv.innerHTML = `<div style="color: #27ae60;">
-                Pre-cached ${zipsToCacheCount} ZIP codes successfully!<br>
+                Successfully pre-cached ALL ${zipsToCacheCount} ZIP codes!<br>
                 Total cached: ${newStats.size}/${totalZips}
             </div>`;
         }
-        
+
     } catch (error) {
         console.log(`Error pre-caching ZIP codes: ${error}`);
-        
+
         // Show error in UI
         const resultsDiv = document.getElementById('ubcZipCacheResults');
         if (resultsDiv) {
@@ -2574,10 +2576,10 @@ async executePreCache() {
         this.createUI();
         this.setupZipAutoFillListener();
         await this.loadZipMapping(); // Pre-load ZIP mapping
-        
+
         // Don't automatically pre-cache anymore - let users do it manually
         // this.manageZipCache(); // This will be called from createUI
-        
+
         this.log(`Universal exporter initialized for ${this.getSiteName()}`);
     }
 
