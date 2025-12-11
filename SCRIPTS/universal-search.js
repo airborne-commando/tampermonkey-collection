@@ -1462,8 +1462,6 @@ class AgeCalculator {
         }
     }
 
-    // Vote.org Extractor Class
-
 // Vote.org Extractor Class
 class VoteOrgExtractor extends BaseExtractor {
     constructor() {
@@ -1472,10 +1470,7 @@ class VoteOrgExtractor extends BaseExtractor {
         this.prefixToState = null;
         this.isLoading = false;
         this.loadPromise = null;
-        this.ZIP_MAPPING_URL = 'https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/main/ZIP_MAPPINGS/zipMapping.js';
-        this.CACHE_KEY = 'zipMappingCache_v3';
-        this.CACHE_TIMESTAMP_KEY = 'zipMappingTimestamp_v3';
-        this.CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
+        this.ZIP_MAPPING_URL = 'https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/zipMapping.js';
     }
 
     async init() {
@@ -1485,229 +1480,57 @@ class VoteOrgExtractor extends BaseExtractor {
         this.setupZipAutoFill();
     }
 
+    // Modified loadZipMapping to use console.log instead of this.log
     async loadZipMapping() {
-        // Return cached mapping if available
-        if (this.zipMapping) {
-            console.log('VoteOrgExtractor: Using in-memory cache');
-            return this.zipMapping;
-        }
-
-        // Check if another load is in progress
-        if (this.isLoading && this.loadPromise) {
-            console.log('VoteOrgExtractor: Waiting for existing load to complete');
-            return this.loadPromise;
-        }
-
-        this.isLoading = true;
-        this.loadPromise = this._performLoad();
-        
         try {
-            const result = await this.loadPromise;
-            return result;
-        } finally {
-            this.isLoading = false;
-            this.loadPromise = null;
-        }
-    }
+            // Load ZIP mapping from external source
+            const response = await fetch('https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/zipMapping.js');
+            const jsContent = await response.text();
 
-    async _performLoad() {
-        try {
-            // Try to get from GM cache first
-            const cachedData = this._getCachedMapping();
-            if (cachedData) {
-                console.log('VoteOrgExtractor: Using GM cache');
-                this.zipMapping = cachedData.zipMapping;
-                this.prefixToState = cachedData.prefixToState || this._getDefaultPrefixToState();
-                return this.zipMapping;
+            // Parse the JavaScript to extract the zipMapping object
+            // The zipMapping.js file should export a getZipMapping() function
+            eval(jsContent); // Execute the script to make getZipMapping available
+
+            if (typeof window.getZipMapping === 'function') {
+                this.zipMapping = window.getZipMapping();
+                console.log(`Loaded ZIP mapping with ${Object.keys(this.zipMapping).length} entries`);
+                this.updateZipMappingStatus(); // Call the method here
+            } else {
+                throw new Error('getZipMapping function not found');
             }
-
-            // Download from GitHub
-            console.log('VoteOrgExtractor: Downloading from GitHub...');
-            const mappingData = await this._downloadZipMapping();
-            
-            // Parse the mapping from the JavaScript file
-            const parsedData = this._parseZipMapping(mappingData);
-            this.zipMapping = parsedData.zipMapping;
-            this.prefixToState = parsedData.prefixToState || this._getDefaultPrefixToState();
-            
-            // Cache the parsed result
-            this._cacheMapping({
-                zipMapping: this.zipMapping,
-                prefixToState: this.prefixToState
-            });
-            
-            console.log(`VoteOrgExtractor: Successfully loaded ${Object.keys(this.zipMapping).length} ZIP mappings`);
-            return this.zipMapping;
-
         } catch (error) {
-            console.error('VoteOrgExtractor: Failed to load mapping:', error);
-            this.zipMapping = this._getDefaultFallbackMapping();
-            this.prefixToState = this._getDefaultPrefixToState();
-            return this.zipMapping;
+            console.log(`Error loading ZIP mapping: ${error}.`);
+            this.zipMapping();
+            this.updateZipMappingStatus(); // Also update status with fallback
         }
     }
 
-    async _downloadZipMapping() {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: this.ZIP_MAPPING_URL,
-                timeout: 30000,
-                onload: function(response) {
-                    if (response.status === 200) {
-                        resolve(response.responseText);
-                    } else {
-                        reject(new Error(`HTTP ${response.status}: ${response.statusText}`));
-                    }
-                },
-                onerror: function(error) {
-                    reject(new Error(`Network error: ${error}`));
-                },
-                ontimeout: function() {
-                    reject(new Error('Request timeout after 30s'));
-                }
-            });
-        });
-    }
-
-    _parseZipMapping(jsContent) {
-        try {
-            const result = {
-                zipMapping: {},
-                prefixToState: {}
-            };
-
-            // Extract zipMapping object
-            const zipMappingMatch = jsContent.match(/const zipMapping = \{([\s\S]*?)\};/);
-            if (zipMappingMatch) {
-                const mappingString = '{' + zipMappingMatch[1] + '}';
-                const jsonString = this._cleanJsonString(mappingString);
-                result.zipMapping = JSON.parse(jsonString);
-            }
-
-            // Extract prefixToState object
-            const prefixMatch = jsContent.match(/const prefixToState = \{([\s\S]*?)\};/);
-            if (prefixMatch) {
-                const prefixString = '{' + prefixMatch[1] + '}';
-                const prefixJson = this._cleanJsonString(prefixString);
-                result.prefixToState = JSON.parse(prefixJson);
-            }
-
-            return result;
-        } catch (error) {
-            console.error('VoteOrgExtractor: Error parsing mapping:', error);
-            return {
-                zipMapping: this._getDefaultFallbackMapping(),
-                prefixToState: this._getDefaultPrefixToState()
-            };
+    updateZipMappingStatus() {
+        // Implementation for updating ZIP mapping status display
+        const statusElement = document.getElementById('ubcZipMappingStatus');
+        if (statusElement && this.zipMapping) {
+            const count = Object.keys(this.zipMapping).length;
+            statusElement.textContent = `ZIP mapping: ${count} codes loaded`;
+            statusElement.style.color = '#27ae60';
         }
-    }
-
-    _cleanJsonString(str) {
-        return str
-            .replace(/(\w+):/g, '"$1":')           // Add quotes to keys
-            .replace(/'/g, '"')                     // Replace single quotes
-            .replace(/,\s*}/g, '}')                 // Remove trailing commas
-            .replace(/,\s*]/g, ']')                 // Remove trailing commas in arrays
-            .replace(/\s*\/\/.*$/gm, '')            // Remove inline comments
-            .replace(/\/\*[\s\S]*?\*\//g, '');      // Remove block comments
-    }
-
-    _getCachedMapping() {
-        try {
-            const cachedData = GM_getValue(this.CACHE_KEY);
-            const timestamp = GM_getValue(this.CACHE_TIMESTAMP_KEY);
-            
-            if (!cachedData || !timestamp) {
-                console.log('VoteOrgExtractor: No cache found');
-                return null;
-            }
-
-            const now = Date.now();
-            const cacheAge = now - timestamp;
-
-            if (cacheAge > this.CACHE_DURATION) {
-                console.log('VoteOrgExtractor: Cache expired, age:', Math.round(cacheAge / (24 * 60 * 60 * 1000)), 'days');
-                this._clearCache();
-                return null;
-            }
-
-            console.log('VoteOrgExtractor: Using cache, age:', Math.round(cacheAge / (60 * 60 * 1000)), 'hours');
-            return cachedData;
-
-        } catch (error) {
-            console.error('VoteOrgExtractor: Error reading cache:', error);
-            return null;
-        }
-    }
-
-    _cacheMapping(data) {
-        try {
-            GM_setValue(this.CACHE_KEY, data);
-            GM_setValue(this.CACHE_TIMESTAMP_KEY, Date.now());
-            console.log('VoteOrgExtractor: Cache updated');
-        } catch (error) {
-            console.error('VoteOrgExtractor: Error caching:', error);
-        }
-    }
-
-    _clearCache() {
-        try {
-            GM_deleteValue(this.CACHE_KEY);
-            GM_deleteValue(this.CACHE_TIMESTAMP_KEY);
-            console.log('VoteOrgExtractor: Cache cleared');
-        } catch (error) {
-            console.error('VoteOrgExtractor: Error clearing cache:', error);
-        }
-    }
-
-    _getDefaultFallbackMapping() {
-        return {
-            '10001': { city: 'New York', state: 'NY', county: 'New York County' },
-            '90210': { city: 'Beverly Hills', state: 'CA', county: 'Los Angeles County' },
-            '33101': { city: 'Miami', state: 'FL', county: 'Miami-Dade County' },
-            '60601': { city: 'Chicago', state: 'IL', county: 'Cook County' },
-            '75201': { city: 'Dallas', state: 'TX', county: 'Dallas County' }
-        };
-    }
-
-    _getDefaultPrefixToState() {
-        return {
-            '100': 'NY', '200': 'DC', '300': 'GA', '400': 'KY', '500': 'IA',
-            '600': 'IL', '700': 'LA', '800': 'CO', '900': 'HI', '010': 'MA',
-            '020': 'MA', '030': 'NH', '040': 'ME', '050': 'VT', '060': 'CT',
-            '070': 'NJ', '080': 'NJ', '090': 'CT', '320': 'FL', '330': 'FL',
-            '331': 'FL', '334': 'FL', '336': 'FL', '339': 'FL', '342': 'FL',
-            '346': 'FL', '347': 'FL', '349': 'FL', '350': 'AL', '352': 'AL',
-            '354': 'AL', '358': 'AL', '360': 'AL', '361': 'AL', '363': 'AL',
-            '365': 'AL', '366': 'AL', '370': 'TN', '371': 'TN', '372': 'TN',
-            '373': 'TN', '374': 'TN', '376': 'TN', '377': 'TN', '378': 'TN',
-            '379': 'TN', '380': 'TN', '381': 'TN', '382': 'TN', '383': 'TN',
-            '384': 'TN', '385': 'TN', '386': 'MS', '387': 'MS', '388': 'MS',
-            '389': 'MS', '390': 'MS', '391': 'MS', '392': 'MS', '393': 'MS',
-            '394': 'MS', '395': 'MS', '396': 'MS', '397': 'MS', '398': 'GA',
-            '399': 'GA', '460': 'IN', '461': 'IN', '462': 'IN', '463': 'IN',
-            '464': 'IN', '465': 'IN', '466': 'IN', '467': 'IN', '468': 'IN',
-            '469': 'IN', '470': 'IN', '471': 'IN', '472': 'IN', '473': 'IN',
-            '474': 'IN', '475': 'IN', '476': 'IN', '477': 'IN', '478': 'IN',
-            '479': 'IN', '480': 'MI', '481': 'MI', '482': 'MI', '483': 'MI',
-            '484': 'MI', '485': 'MI', '486': 'MI', '487': 'MI', '488': 'MI',
-            '489': 'MI', '490': 'MI', '491': 'MI', '492': 'MI', '493': 'MI',
-            '494': 'MI', '495': 'MI', '496': 'MI', '497': 'MI', '498': 'MI',
-            '499': 'MI'
-        };
     }
 
     getStateFromZipPrefix(zipCode) {
         if (!zipCode || zipCode.length < 3) return null;
-        
+
         const prefix = zipCode.substring(0, 3);
-        
+
         // Ensure prefixToState is loaded
         if (!this.prefixToState) {
-            this.prefixToState = this._getDefaultPrefixToState();
+            // Create a simple prefix to state mapping if not available
+            this.prefixToState = {
+                '100': 'NY', '200': 'DC', '300': 'GA', '400': 'KY', '500': 'IA',
+                '600': 'IL', '700': 'LA', '800': 'CO', '900': 'HI', '010': 'MA',
+                '020': 'MA', '030': 'NH', '040': 'ME', '050': 'VT', '060': 'CT',
+                '070': 'NJ', '080': 'NJ', '090': 'CT', '165': 'PA'
+            };
         }
-        
+
         return this.prefixToState[prefix] || null;
     }
 
@@ -1722,86 +1545,6 @@ class VoteOrgExtractor extends BaseExtractor {
     getStats() {
         if (!this.zipMapping) {
             return { count: 0, source: 'none', cached: false };
-        }
-        
-        const isFallback = this.zipMapping === this._getDefaultFallbackMapping();
-        return {
-            count: Object.keys(this.zipMapping).length,
-            prefixCount: this.prefixToState ? Object.keys(this.prefixToState).length : 0,
-            source: isFallback ? 'fallback' : 'github',
-            cached: this._getCachedMapping() !== null
-        };
-    }
-
-    // The rest of your methods remain the same...
-    autoFillFromZip(zipCode) {
-        if (!this.zipMapping) {
-            this.loadZipMapping();
-        }
-
-        const locationData = this.zipMapping[zipCode];
-
-        if (locationData) {
-            console.log(`Found location data for ZIP ${zipCode}:`, locationData);
-
-            // Fill city field
-            const cityInput = document.querySelector('input[name="city"], input[name*="city"], input[id*="city"]');
-            if (cityInput && locationData.city) {
-                cityInput.value = locationData.city;
-                console.log(`Auto-filled city: ${locationData.city}`);
-            }
-
-            // Fill state field - handle both select and input fields
-            const stateSelect = document.querySelector('select[name*="state"], select[name="state_abbr"], select[id*="state"]');
-            const stateInput = document.querySelector('input[name*="state"], input[id*="state"]');
-
-            if (stateSelect && locationData.state) {
-                const option = Array.from(stateSelect.options).find(opt =>
-                    opt.value.toUpperCase() === locationData.state.toUpperCase() ||
-                    opt.textContent.toUpperCase().includes(locationData.state.toUpperCase())
-                );
-                if (option) {
-                    stateSelect.value = option.value;
-                    console.log(`Auto-filled state (select): ${locationData.state}`);
-                }
-            } else if (stateInput && locationData.state) {
-                stateInput.value = locationData.state;
-                console.log(`Auto-filled state (input): ${locationData.state}`);
-            }
-
-            // Fill county field if it exists
-            const countyInput = document.querySelector('input[name*="county"], select[name*="county"], input[id*="county"]');
-            if (countyInput && locationData.county) {
-                countyInput.value = locationData.county;
-                console.log(`Auto-filled county: ${locationData.county}`);
-            }
-
-            return true;
-        } else {
-            console.log(`No mapping found for ZIP: ${zipCode}`);
-
-            // Fallback: Try to get state from ZIP prefix
-            const state = this.getStateFromZipPrefix(zipCode);
-            if (state) {
-                console.log(`Using state from prefix: ${state}`);
-                const stateSelect = document.querySelector('select[name*="state"], select[name="state_abbr"]');
-                const stateInput = document.querySelector('input[name*="state"]');
-
-                if (stateSelect) {
-                    const option = Array.from(stateSelect.options).find(opt =>
-                        opt.value.toUpperCase() === state.toUpperCase()
-                    );
-                    if (option) {
-                        stateSelect.value = option.value;
-                        console.log(`Auto-filled state from prefix: ${state}`);
-                    }
-                } else if (stateInput) {
-                    stateInput.value = state;
-                    console.log(`Auto-filled state from prefix: ${state}`);
-                }
-            }
-
-            return false;
         }
     }
 
@@ -1981,50 +1724,6 @@ class VoteOrgExtractor extends BaseExtractor {
     }
 }
 
-    // Generic Extractor for fallback
-class GenericExtractor extends BaseExtractor {
-        extractData() {
-            const data = super.extractData();
-
-            // Try to extract any person-like data
-            const potentialPeople = document.querySelectorAll('[class*="person"], [class*="result"], [class*="card"]');
-            if (potentialPeople.length > 0) {
-                data.results = this.extractGenericData(potentialPeople);
-                data.pageType = 'generic_results';
-            }
-
-            return data;
-        }
-
-        extractGenericData(elements) {
-            const people = [];
-
-            elements.forEach((element, index) => {
-                const person = {
-                    type: 'generic_result',
-                    status: 'found',
-                    id: element.id || `generic_${index}`,
-                    rawText: element.textContent.trim().substring(0, 200) + '...'
-                };
-
-                // Try to find name-like text (usually in headings)
-                const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, b');
-                headings.forEach(heading => {
-                    const text = heading.textContent.trim();
-                    if (text && text.length > 2 && text.length < 50 && !person.name) {
-                        person.name = text;
-                    }
-                });
-
-                if (person.name || person.rawText.length > 50) {
-                    people.push(person);
-                }
-            });
-
-            return people;
-        }
-    }
-
     // Main Universal Exporter Class
     class UniversalBackgroundCheckExporter {
         constructor() {
@@ -2032,76 +1731,231 @@ class GenericExtractor extends BaseExtractor {
             this.isMobile = this.detectMobile();
             this.currentPageData = null;
             this.siteExtractor = null;
+            this.zipMapping = null; // Add this line
             this.init();
         }
+
+    // Add ZIP code input listener for auto-fill
+    setupZipAutoFillListener() {
+        const zipInput = document.getElementById('ubcVoteZip');
+        if (zipInput) {
+            zipInput.addEventListener('input', async (e) => {
+                const zipCode = e.target.value.trim();
+                if (zipCode.length === 5 && /^\d{5}$/.test(zipCode)) {
+                    await this.autoFillFromZip(zipCode);
+                }
+            });
+
+            // Also auto-fill on page load if ZIP is already present
+            setTimeout(() => {
+                const existingZip = zipInput.value.trim();
+                if (existingZip.length === 5 && /^\d{5}$/.test(existingZip)) {
+                    this.autoFillFromZip(existingZip);
+                }
+            }, 1000);
+        }
+    }
+
+    // Add ZIP mapping loading methods
+    async loadZipMapping() {
+        try {
+            // Load ZIP mapping from external source
+            const response = await fetch('https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/dev/SCRIPTS/zipMapping.js');
+            const jsContent = await response.text();
+
+            console.log('ZIP mapping file loaded, length:', jsContent.length);
+            console.log('First 500 chars:', jsContent.substring(0, 500));
+
+            // Try to extract zipMapping from the JavaScript content
+            this.zipMapping = this.extractZipMappingFromJS(jsContent);
+
+            if (this.zipMapping && Object.keys(this.zipMapping).length > 0) {
+                console.log(`Loaded ZIP mapping with ${Object.keys(this.zipMapping).length} entries`);
+                this.updateZipMappingStatus();
+                return;
+            }
+
+            throw new Error('Could not extract zipMapping from file');
+
+        } catch (error) {
+            console.log(`Error loading ZIP mapping: ${error}.`);
+            this.zipMapping();
+            this.updateZipMappingStatus();
+        }
+    }
+
+    // Helper method to extract zipMapping from JavaScript
+    extractZipMappingFromJS(jsContent) {
+        try {
+            // Look for the zipMapping object definition
+            // Pattern: const zipMapping = { ... } or let zipMapping = { ... } or var zipMapping = { ... }
+            const patterns = [
+                /(?:const|let|var)\s+zipMapping\s*=\s*({[\s\S]*?});/,
+                /window\.zipMapping\s*=\s*({[\s\S]*?});/,
+                /export\s+const\s+zipMapping\s*=\s*({[\s\S]*?});/,
+                /zipMapping\s*:\s*({[\s\S]*?})/
+            ];
+
+            for (const pattern of patterns) {
+                const match = jsContent.match(pattern);
+                if (match && match[1]) {
+                    console.log('Found zipMapping pattern match');
+
+                    // Clean the JSON string
+                    const jsonStr = match[1]
+                        .replace(/'/g, '"')  // Replace single quotes with double quotes
+                        .replace(/(\d{5})\s*:/g, '"$1":')  // Quote ZIP codes
+                        .replace(/([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '"$1":')  // Quote property names
+                        .replace(/,\s*}/g, '}')  // Remove trailing commas
+                        .replace(/,\s*]/g, ']');  // Remove trailing commas in arrays
+
+                    try {
+                        const mapping = JSON.parse(jsonStr);
+                        console.log('Successfully parsed zipMapping');
+                        return mapping;
+                    } catch (parseError) {
+                        console.log('JSON parse error, trying alternative extraction:', parseError);
+                    }
+                }
+            }
+
+            // Alternative: Look for any large object that looks like zip mapping
+            const objectMatch = jsContent.match(/{[\s\S]*?'\d{5}'[\s\S]*?}/);
+            if (objectMatch) {
+                console.log('Found potential object, trying manual extraction');
+                return this.extractZipMappingManually(jsContent);
+            }
+
+        } catch (error) {
+            console.log('Error extracting zipMapping:', error);
+        }
+
+        return null;
+    }
+
+    // Helper method for manual extraction
+    extractZipMappingManually(jsContent) {
+        const mapping = {};
+
+        // Look for ZIP code patterns: '12345': { ... }
+        const zipPattern = /'(\d{5})'\s*:\s*{([^}]+)}/g;
+        let match;
+
+        while ((match = zipPattern.exec(jsContent)) !== null) {
+            const zipCode = match[1];
+            const content = match[2];
+
+            // Extract city, state, county
+            const cityMatch = content.match(/city['"]?\s*:\s*['"]([^'"]+)['"]/);
+            const stateMatch = content.match(/state['"]?\s*:\s*['"]([^'"]+)['"]/);
+            const countyMatch = content.match(/county['"]?\s*:\s*['"]([^'"]+)['"]/);
+
+            if (cityMatch && stateMatch) {
+                mapping[zipCode] = {
+                    city: cityMatch[1],
+                    state: stateMatch[1],
+                    county: countyMatch ? countyMatch[1] : ''
+                };
+            }
+        }
+
+        return mapping;
+    }
+
+    // Add autoFillFromZip method
+    async autoFillFromZip(zipCode) {
+        if (!this.zipMapping) {
+            await this.loadZipMapping();
+        }
+
+        const mapping = this.zipMapping[zipCode];
+
+        if (mapping) {
+            // Fill city field - ALWAYS overwrite
+            const cityInput = document.getElementById('ubcVoteCity');
+            if (cityInput && mapping.city) {
+                cityInput.value = mapping.city;
+                console.log(`Auto-filled city: ${mapping.city}`);
+            }
+
+            // Fill state field - ALWAYS overwrite
+            const stateInput = document.getElementById('ubcVoteState');
+            if (stateInput && mapping.state) {
+                stateInput.value = mapping.state;
+                console.log(`Auto-filled state: ${mapping.state}`);
+            }
+
+            return true;
+        } else {
+            console.log(`No mapping found for ZIP: ${zipCode}`);
+
+            // Show error message in the results div
+            const resultsDiv = document.getElementById('ubcVoteResults');
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `<div style="color: #e74c3c; font-size: 11px;">No mapping found for ZIP code: ${zipCode}</div>`;
+                resultsDiv.style.display = 'block';
+            }
+
+            return false;
+        }
+    }
+
+    // Add updateZipMappingStatus method
+    updateZipMappingStatus() {
+        const statusElement = document.getElementById('ubcZipMappingStatus');
+        if (statusElement && this.zipMapping) {
+            const count = Object.keys(this.zipMapping).length;
+            statusElement.textContent = `ZIP mapping: ${count} codes loaded (auto-fills city/state)`;
+            statusElement.style.color = '#27ae60';
+        }
+    }
 
     setupZipAutoFillForVoteSection() {
         const zipInput = document.getElementById('ubcVoteZip');
         if (!zipInput) return;
 
-        // Create an instance of VoteOrgExtractor to use its ZIP mapping functionality
-        const voteExtractor = new VoteOrgExtractor();
-        voteExtractor.loadZipMapping();
-
         zipInput.addEventListener('input', (e) => {
             const zipCode = e.target.value.trim();
 
             // Only process when we have a valid 5-digit ZIP code
-            if (zipCode.length === 5 && /^\d+$/.test(zipCode)) {
+            if (zipCode.length === 5 && /^\d{5}$/.test(zipCode)) {
                 console.log(`Detected ZIP code in vote section: ${zipCode}`);
 
-                // Use the existing ZIP mapping functionality
-                const locationData = voteExtractor.zipMapping[zipCode];
-
-                if (locationData) {
-                    console.log(`Found location data for ZIP ${zipCode}:`, locationData);
-
-                    // Fill city field
-                    const cityInput = document.getElementById('ubcVoteCity');
-                    if (cityInput && locationData.city) {
-                        cityInput.value = locationData.city;
-                        console.log(`Auto-filled city: ${locationData.city}`);
-                    }
-
-                    // Fill state field
-                    const stateInput = document.getElementById('ubcVoteState');
-                    if (stateInput && locationData.state) {
-                        stateInput.value = locationData.state;
-                        console.log(`Auto-filled state: ${locationData.state}`);
-                    }
-                } else {
-                    console.log(`No mapping found for ZIP: ${zipCode}`);
-
-                    // Fallback: Try to get state from ZIP prefix
-                    const state = voteExtractor.getStateFromZipPrefix(zipCode);
-                    if (state) {
-                        console.log(`Using state from prefix: ${state}`);
-                        const stateInput = document.getElementById('ubcVoteState');
-                        if (stateInput) {
-                            stateInput.value = state;
-                            console.log(`Auto-filled state from prefix: ${state}`);
-                        }
-                    }
+                // Clear any existing error messages
+                const resultsDiv = document.getElementById('ubcVoteResults');
+                if (resultsDiv && resultsDiv.style.display === 'block') {
+                    resultsDiv.style.display = 'none';
+                    resultsDiv.innerHTML = '';
                 }
+
+                // Auto-fill city and state
+                this.autoFillFromZip(zipCode);
+            } else if (zipCode.length > 5) {
+                // Show error for invalid ZIP code
+                const resultsDiv = document.getElementById('ubcVoteResults');
+                if (resultsDiv) {
+                    resultsDiv.innerHTML = `<div style="color: #e74c3c; font-size: 11px;">Please enter a valid 5-digit ZIP code</div>`;
+                    resultsDiv.style.display = 'block';
+                }
+            }
+        });
+
+        zipInput.addEventListener('blur', (e) => {
+            const zipCode = e.target.value.trim();
+            if (zipCode.length === 5 && /^\d{5}$/.test(zipCode)) {
+                // Try to auto-fill on blur as well
+                this.autoFillFromZip(zipCode);
             }
         });
 
         // Also try to auto-fill on page load if ZIP is already present
         setTimeout(() => {
             const existingZip = zipInput.value.trim();
-            if (existingZip.length === 5 && /^\d+$/.test(existingZip)) {
+            if (existingZip.length === 5 && /^\d{5}$/.test(existingZip)) {
                 console.log(`Auto-filling existing ZIP in vote section: ${existingZip}`);
-                const locationData = voteExtractor.zipMapping[existingZip];
-
-                if (locationData) {
-                    const cityInput = document.getElementById('ubcVoteCity');
-                    const stateInput = document.getElementById('ubcVoteState');
-
-                    if (cityInput && locationData.city) cityInput.value = locationData.city;
-                    if (stateInput && locationData.state) stateInput.value = locationData.state;
-                }
+                this.autoFillFromZip(existingZip);
             }
-        }, 500);
+        }, 1000);
     }
 
         async init() {
@@ -2109,6 +1963,8 @@ class GenericExtractor extends BaseExtractor {
             this.initializeSiteExtractor();
             this.extractCurrentPageData();
             this.createUI();
+            this.setupZipAutoFillListener();
+            await this.loadZipMapping(); // Pre-load ZIP mapping
         }
 
         async waitForPageLoad() {
@@ -2298,26 +2154,29 @@ createUI() {
     const voteOrgSection = document.createElement('div');
     voteOrgSection.style.cssText = 'margin-bottom: 15px; padding: 10px; background: #f0e6ff; border-radius: 4px; border: 1px solid #d9c2ff;';
     voteOrgSection.innerHTML = `
-        <div style="font-weight: bold; margin-bottom: 8px; color: #6b46c1;">Vote.org API Check:</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-            <input type="text" id="ubcVoteFirstName" placeholder="First Name *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-            <input type="text" id="ubcVoteLastName" placeholder="Last Name *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-            <input type="text" id="ubcVoteStreet" placeholder="Street Address *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px; width: auto;">
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-            <input type="text" id="ubcVoteCity" placeholder="City *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-            <input type="text" id="ubcVoteState" placeholder="State *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-            <input type="text" id="ubcVoteZip" placeholder="ZIP Code *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-            <input type="text" id="ubcVoteYear" placeholder="Birth Year (YYYY) *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
-        </div>
-        <div style="font-size: 10px; color: #666; margin-bottom: 8px;">
-            * Required fields. Date of birth will be set to 01/01/YYYY automatically. see why <a href="https://github.com/airborne-commando/tampermonkey-collection?tab=readme-ov-file#voter-extraction-lite" target="_blank" style="color: #9b59b6">here</a>.
-        </div>
-        <button id="ubcCheckVoter" style="background: #6b46c1; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%;">Check Voter Status via API</button>
-        <div id="ubcVoteResults" style="margin-top: 10px; font-size: 11px; display: none;"></div>
-    `;
+    <div style="font-weight: bold; margin-bottom: 8px; color: #6b46c1;">Vote.org API Check:</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="ubcVoteFirstName" placeholder="First Name *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+        <input type="text" id="ubcVoteLastName" placeholder="Last Name *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+        <input type="text" id="ubcVoteStreet" placeholder="Street Address *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px; width: auto;">
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="ubcVoteCity" placeholder="City *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+        <input type="text" id="ubcVoteState" placeholder="State *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+        <input type="text" id="ubcVoteZip" placeholder="ZIP Code *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+        <input type="text" id="ubcVoteYear" placeholder="Birth Year (YYYY) *" style="padding: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+    </div>
+    <div style="font-size: 10px; color: #666; margin-bottom: 8px;">
+        * Required fields. City/State will auto-fill from ZIP code if left empty.
+    </div>
+    <div id="ubcZipMappingStatus" style="font-size: 9px; color: #666; margin-bottom: 8px; font-style: italic;">
+        ZIP mapping: Loading...
+    </div>
+    <button id="ubcCheckVoter" style="background: #6b46c1; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%;">Check Voter Status via API</button>
+    <div id="ubcVoteResults" style="margin-top: 10px; font-size: 11px; display: none;"></div>
+`;
 
     // Current page info
     const pageInfo = document.createElement('div');
@@ -2536,86 +2395,117 @@ createUI() {
 }
 
 
-        async checkVoterStatus() {
-            const firstName = document.getElementById('ubcVoteFirstName').value.trim();
-            const lastName = document.getElementById('ubcVoteLastName').value.trim();
-            const streetAddress = document.getElementById('ubcVoteStreet').value.trim();
-            const city = document.getElementById('ubcVoteCity').value.trim();
-            const state = document.getElementById('ubcVoteState').value.trim();
-            const zipCode = document.getElementById('ubcVoteZip').value.trim();
-            const dobYear = document.getElementById('ubcVoteYear').value.trim();
+async checkVoterStatus() {
+    const firstName = document.getElementById('ubcVoteFirstName').value.trim();
+    const lastName = document.getElementById('ubcVoteLastName').value.trim();
+    const streetAddress = document.getElementById('ubcVoteStreet').value.trim();
+    const city = document.getElementById('ubcVoteCity').value.trim();
+    const state = document.getElementById('ubcVoteState').value.trim();
+    const zipCode = document.getElementById('ubcVoteZip').value.trim();
+    const dobYear = document.getElementById('ubcVoteYear').value.trim();
 
-            // Validate inputs
-            if (!firstName || !lastName || !streetAddress || !zipCode || !dobYear) {
-                this.log('Please fill all required fields for voter check');
-                return;
-            }
+    // Validate inputs
+    if (!firstName || !lastName || !streetAddress || !zipCode || !dobYear) {
+        this.log('Please fill all required fields for voter check');
+        const resultsDiv = document.getElementById('ubcVoteResults');
+        resultsDiv.innerHTML = `<div style="color: #e74c3c;">Please fill all required fields marked with *</div>`;
+        resultsDiv.style.display = 'block';
+        return;
+    }
 
-            if (!dobYear.match(/^\d{4}$/) || parseInt(dobYear) < 1900 || parseInt(dobYear) > new Date().getFullYear()) {
-                this.log('Please enter a valid 4-digit birth year');
-                return;
-            }
+    // Validate ZIP code format
+    if (!/^\d{5}$/.test(zipCode)) {
+        this.log('Please enter a valid 5-digit ZIP code');
+        const resultsDiv = document.getElementById('ubcVoteResults');
+        resultsDiv.innerHTML = `<div style="color: #e74c3c;">Please enter a valid 5-digit ZIP code</div>`;
+        resultsDiv.style.display = 'block';
+        return;
+    }
 
-            this.log('Checking voter registration status via API...');
+    if (!dobYear.match(/^\d{4}$/) || parseInt(dobYear) < 1900 || parseInt(dobYear) > new Date().getFullYear()) {
+        this.log('Please enter a valid 4-digit birth year');
+        return;
+    }
 
-            const voterData = {
-                firstName,
-                lastName,
-                streetAddress,
-                city,
-                state,
-                zipCode,
-                dobYear
-            };
+    this.log('Checking voter registration status via API...');
 
-            try {
-                const result = await VoteOrgAPI.checkVoterStatus(voterData);
+    const voterData = {
+        firstName,
+        lastName,
+        streetAddress,
+        city: city || await this.getCityFromZip(zipCode),
+        state: state || await this.getStateFromZip(zipCode),
+        zipCode,
+        dobYear
+    };
 
-                if (result.success) {
-                    const voterInfo = VoteOrgAPI.parseVoterResponse(result.responseText);
+    // If city or state are empty, try to auto-fill from ZIP
+    if ((!city || !state) && zipCode) {
+        await this.autoFillFromZip(zipCode);
 
-                    // Display results
-                    const resultsDiv = document.getElementById('ubcVoteResults');
-                    let html = '<div style="font-weight: bold; margin-bottom: 5px;">Voter Registration Results:</div>';
+        // Re-get the values after auto-fill
+        const updatedCity = document.getElementById('ubcVoteCity').value.trim();
+        const updatedState = document.getElementById('ubcVoteState').value.trim();
 
-                    if (voterInfo.isRegistered) {
-                        html += `<div style="color: #27ae60; font-weight: bold;">✓ REGISTERED TO VOTE</div>`;
-                    } else {
-                        html += `<div style="color: #e74c3c; font-weight: bold;">✗ NOT REGISTERED</div>`;
-                    }
-
-                    if (voterInfo.fullName) {
-                        html += `<div><strong>Name:</strong> ${voterInfo.fullName}</div>`;
-                    }
-
-                    if (voterInfo.registrationAddress) {
-                        html += `<div><strong>Address:</strong> ${voterInfo.registrationAddress}</div>`;
-                    }
-
-                    html += `<div><strong>Status:</strong> ${voterInfo.registrationStatus}</div>`;
-                    html += `<div style="margin-top: 8px; font-size: 10px; color: #666;">API request successful</div>`;
-
-                    resultsDiv.innerHTML = html;
-                    resultsDiv.style.display = 'block';
-
-                    this.log(`Voter check completed: ${voterInfo.registrationStatus}`);
-
-                    // Save the result
-                    this.saveVoterResult(voterInfo, voterData);
-
-                } else {
-                    this.log(`API request failed: ${result.error}`);
-                    const resultsDiv = document.getElementById('ubcVoteResults');
-                    resultsDiv.innerHTML = `<div style="color: #e74c3c;">API request failed: ${result.error}</div>`;
-                    resultsDiv.style.display = 'block';
-                }
-            } catch (error) {
-                this.log(`Error checking voter status: ${error}`);
-                const resultsDiv = document.getElementById('ubcVoteResults');
-                resultsDiv.innerHTML = `<div style="color: #e74c3c;">Error: ${error.message}</div>`;
-                resultsDiv.style.display = 'block';
-            }
+        if (!updatedCity || !updatedState) {
+            this.log('Could not determine city/state from ZIP code');
+            const resultsDiv = document.getElementById('ubcVoteResults');
+            resultsDiv.innerHTML = `<div style="color: #e74c3c;">Could not determine city/state from ZIP code. Please enter manually.</div>`;
+            resultsDiv.style.display = 'block';
+            return;
         }
+    }
+
+    try {
+        const result = await VoteOrgAPI.checkVoterStatus(voterData);
+
+        if (result.success) {
+            const voterInfo = VoteOrgAPI.parseVoterResponse(result.responseText);
+
+            // Display results
+            const resultsDiv = document.getElementById('ubcVoteResults');
+            let html = '<div style="font-weight: bold; margin-bottom: 5px;">Voter Registration Results:</div>';
+
+            if (voterInfo.isRegistered) {
+                html += `<div style="color: #27ae60; font-weight: bold;">✓ REGISTERED TO VOTE</div>`;
+            } else {
+                html += `<div style="color: #e74c3c; font-weight: bold;">✗ NOT REGISTERED</div>`;
+            }
+
+            if (voterInfo.fullName) {
+                html += `<div><strong>Name:</strong> ${voterInfo.fullName}</div>`;
+            }
+
+            if (voterInfo.registrationAddress) {
+                html += `<div><strong>Address:</strong> ${voterInfo.registrationAddress}</div>`;
+            }
+
+            html += `<div><strong>Status:</strong> ${voterInfo.registrationStatus}</div>`;
+            html += `<div><strong>Location Used:</strong> ${voterData.city}, ${voterData.state} ${zipCode}</div>`;
+            html += `<div style="margin-top: 8px; font-size: 10px; color: #666;">API request successful</div>`;
+
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
+
+            this.log(`Voter check completed: ${voterInfo.registrationStatus}`);
+
+            // Save the result
+            this.saveVoterResult(voterInfo, voterData);
+
+        } else {
+            this.log(`API request failed: ${result.error}`);
+            const resultsDiv = document.getElementById('ubcVoteResults');
+            resultsDiv.innerHTML = `<div style="color: #e74c3c;">API request failed: ${result.error}</div>`;
+            resultsDiv.style.display = 'block';
+        }
+    } catch (error) {
+        this.log(`Error checking voter status: ${error}`);
+        const resultsDiv = document.getElementById('ubcVoteResults');
+        resultsDiv.innerHTML = `<div style="color: #e74c3c;">Error: ${error.message}</div>`;
+        resultsDiv.style.display = 'block';
+    }
+}
+
 
 calculateAge() {
     const dateInput = document.getElementById('ubcAgeDate').value.trim();
