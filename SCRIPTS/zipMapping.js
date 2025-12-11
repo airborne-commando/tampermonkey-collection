@@ -7,7 +7,7 @@
 // @grant        none
 // ==/UserScript==
 
-// for quick voter checker for universal-search
+// for quick voter checker for universial-search
 
 (function() {
     'use strict';
@@ -15,7 +15,7 @@
     console.log('Zip mapping loaded');
 
     // Comprehensive ZIP code to city/state/county mapping
-    const zipMapping = {
+    const zipMapping  = {
         '00501': { city: 'Holtsville', state: 'NY', county: 'Suffolk' },
         '00544': { city: 'Holtsville', state: 'NY', county: 'Suffolk' },
         '00601': { city: 'Adjuntas', state: 'PR', county: 'Adjuntas' },
@@ -40969,9 +40969,14 @@
         '99950': { city: 'Ketchikan', state: 'AK', county: 'Ketchikan Gateway' }
     };
 
-    // Simple 3-digit prefix to state mapping
-    const prefixToState = {                
-        
+
+        getStateFromZipPrefix(zipCode) {
+            if (!zipCode || zipCode.length < 3) return null;
+
+            const prefix = zipCode.substring(0, 3);
+
+            // Simple 3-digit prefix to state mapping
+            const prefixToState = {
                 // Alaska
                 '995': 'AK', '996': 'AK', '997': 'AK', '998': 'AK', '999': 'AK',
 
@@ -41262,9 +41267,79 @@
                 '826': 'WY', '827': 'WY', '828': 'WY', '829': 'WY', '830': 'WY', '831': 'WY'
             };
 
-    // Make data available globally
-    window.zipMappingData = zipMapping;
-    window.zipPrefixData = prefixToState;
-    
-    console.log(`Loaded ${Object.keys(zipMapping).length} ZIP codes`);
+            return prefixToState[prefix] || null;
+        }
+
+        autoFillFromZip(zipCode) {
+            if (!this.zipMapping) {
+                this.loadZipMapping();
+            }
+
+            const locationData = this.zipMapping[zipCode];
+
+            if (locationData) {
+                console.log(`Found location data for ZIP ${zipCode}:`, locationData);
+
+                // Fill city field
+                const cityInput = document.querySelector('input[name="city"], input[name*="city"], input[id*="city"]');
+                if (cityInput && locationData.city) {
+                    cityInput.value = locationData.city;
+                    console.log(`Auto-filled city: ${locationData.city}`);
+                }
+
+                // Fill state field - handle both select and input fields
+                const stateSelect = document.querySelector('select[name*="state"], select[name="state_abbr"], select[id*="state"]');
+                const stateInput = document.querySelector('input[name*="state"], input[id*="state"]');
+
+                if (stateSelect && locationData.state) {
+                    const option = Array.from(stateSelect.options).find(opt =>
+                        opt.value.toUpperCase() === locationData.state.toUpperCase() ||
+                        opt.textContent.toUpperCase().includes(locationData.state.toUpperCase())
+                    );
+                    if (option) {
+                        stateSelect.value = option.value;
+                        console.log(`Auto-filled state (select): ${locationData.state}`);
+                    }
+                } else if (stateInput && locationData.state) {
+                    stateInput.value = locationData.state;
+                    console.log(`Auto-filled state (input): ${locationData.state}`);
+                }
+
+                // Fill county field if it exists
+                const countyInput = document.querySelector('input[name*="county"], select[name*="county"], input[id*="county"]');
+                if (countyInput && locationData.county) {
+                    countyInput.value = locationData.county;
+                    console.log(`Auto-filled county: ${locationData.county}`);
+                }
+
+                return true;
+            } else {
+                console.log(`No mapping found for ZIP: ${zipCode}`);
+
+
+        // Fallback: Try to get state from ZIP prefix
+        const state = this.getStateFromZipPrefix(zipCode);
+        if (state) {
+            console.log(`Using state from prefix: ${state}`);
+            const stateSelect = document.querySelector('select[name*="state"], select[name="state_abbr"]');
+            const stateInput = document.querySelector('input[name*="state"]');
+
+            if (stateSelect) {
+                const option = Array.from(stateSelect.options).find(opt =>
+                    opt.value.toUpperCase() === state.toUpperCase()
+                );
+                if (option) {
+                    stateSelect.value = option.value;
+                    console.log(`Auto-filled state from prefix: ${state}`);
+                }
+            } else if (stateInput) {
+                stateInput.value = state;
+                console.log(`Auto-filled state from prefix: ${state}`);
+            }
+        }
+
+        return false;
+    }
+}
+
 })();
