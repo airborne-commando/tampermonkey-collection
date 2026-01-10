@@ -327,3 +327,9 @@ Basically just extracts links on a webpage, use this with archive.ph or wayback 
 [facecheck photo extractor](https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/main/SCRIPTS/facecheck-id-img-extractor.js)
 
 Basically extracts photos from a webpage; will redirect you to the webp image.
+
+Can be useful for sites such as:
+
+* TinEye
+* lenso.ai
+* Pimeyes
