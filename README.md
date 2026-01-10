@@ -320,3 +320,10 @@ Basically just extracts links on a webpage, use this with archive.ph or wayback 
 * Load saved will load what's saved in memory.
 * Save to file will download.
 * Use with [archive-gui.py](https://github.com/airborne-commando/link-extractor-and-archive/blob/main/archive-gui.py) OR [archive.py](https://github.com/airborne-commando/link-extractor-and-archive/blob/main/archive.py)
+
+
+# Facecheck photo extractor
+
+[facecheck photo extractor](https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/main/SCRIPTS/facecheck-id-img-extractor.js)
+
+Basically extracts photos from a webpage; will redirect you to the webp image.
