@@ -328,6 +328,8 @@ Basically just extracts links on a webpage, use this with archive.ph or wayback 
 
 Also one for an [onlyfans face search](https://raw.githubusercontent.com/airborne-commando/tampermonkey-collection/refs/heads/main/SCRIPTS/facecheck-OF-edition.js)
 
+You'll have to delete everything under local storage.
+
 Basically extracts photos from a webpage; will redirect you to the webp image.
 
 Can be useful for sites such as:
