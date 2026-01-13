@@ -338,5 +338,6 @@ Can be useful for sites such as:
 * lenso.ai
 * Pimeyes
 * [Facematch](https://github.com/airborne-commando/facematch/tree/main)
+* [face-spy](https://face-spy.com/)
 
 Seeing how the webp data is no longer useful for extraction, this would be the better way of doing things.
