@@ -343,18 +343,18 @@
 
         // CSS Variables for easy theme management
         const desktopStyles = `
-            :root {
-                --popup-bg: #1e1e1e;
-                --popup-color: #00ffff;
-                --popup-opacity: 0.95;
-                --popup-border: 1px solid rgba(0, 255, 255, 0.2);
-                --popup-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-                --popup-radius: 12px;
-                --popup-padding: 16px;
-                --popup-width: 400px;
-                --popup-max-height: 500px;
-                --popup-transition: opacity 0.3s ease, transform 0.3s ease;
-            }
+	        :root {
+	            --popup-bg: #1e1e1e;
+	            --popup-color: #00ffff;
+	            --popup-opacity: 0.95;
+	            --popup-border: 1px solid rgba(0, 255, 255, 0.2);
+	            --popup-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	            --popup-radius: 8px; /* Reduced from 12px */
+	            --popup-padding: 12px; /* Reduced from 16px */
+	            --popup-width: 350px; /* Reduced from 400px */
+	            --popup-max-height: 400px; /* Reduced from 500px */
+	            --popup-transition: opacity 0.2s ease, transform 0.2s ease; /* Faster */
+	        }
             .popup {
                 position: fixed;
                 background: var(--popup-bg);
@@ -431,8 +431,38 @@
         // Function to display results in the popup window
         const displayResultsDesktop = (results, popup, fimg) => {
             const rect = fimg.getBoundingClientRect();
-            popup.style.left = `${rect.right + 10}px`;
-            popup.style.top = `${rect.top}px`;
+            
+            // Get viewport dimensions
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            
+            // Position directly below the image
+            let leftPosition = rect.left;
+            let topPosition = rect.bottom - 5; // Just below the image
+            
+            // Adjust if popup would go offscreen to the right
+            const popupWidth = 400; // Should match --popup-width CSS variable
+            if (leftPosition + popupWidth > viewportWidth - 10) {
+                // Try placing on left side instead
+                if (rect.left - popupWidth > 10) {
+                    leftPosition = rect.left - popupWidth - 5;
+                } else {
+                    // If neither side works, position at viewport edge
+                    leftPosition = viewportWidth - popupWidth - 10;
+                }
+            }
+            
+            // Adjust if popup would go offscreen vertically
+            const popupHeight = Math.min(500, results.length * 100); // Estimate height
+            if (topPosition + popupHeight > viewportHeight - 10) {
+                topPosition = viewportHeight - popupHeight - 10;
+            }
+            if (topPosition < 10) {
+                topPosition = 10;
+            }
+            
+            popup.style.left = `${leftPosition}px`;
+            popup.style.top = `${topPosition}px`;
 
             const resultsList = results.map((result, index) => `
                 <li>
