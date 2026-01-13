@@ -4,7 +4,7 @@
 // @version      4.0.0
 // @description  Extracts image URLs from FaceSpy results for both mobile and desktop
 // @author       Based on original by vin31_, modified for FaceSpy
-// @match        https://face-spy.com/*
+// @match        https://face-spy.com/results/*
 // @grant        none
 // ==/UserScript==
 
